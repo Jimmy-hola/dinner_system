@@ -71,9 +71,9 @@ const callGemini = async (prompt) => {
 
 // --- 1. 資料初始化與解析 ---
 const SUBJECT_MAPPING = {
-  physics: { name: '理化', days: [1, 4], color: 'bg-blue-100 text-blue-800' }, 
-  english: { name: '英文', days: [2, 5], color: 'bg-green-100 text-green-800' },
-  math:    { name: '數學', days: [3],    color: 'bg-red-100 text-red-800' }
+  physics: { name: '理化', days: [1, 4], color: 'bg-blue-100 text-blue-800 border-blue-200' }, 
+  english: { name: '英文', days: [2, 5], color: 'bg-green-100 text-green-800 border-green-200' },
+  math:    { name: '數學', days: [3],    color: 'bg-red-100 text-red-800 border-red-200' }
 };
 
 const parseScheduleString = (str) => {
@@ -340,6 +340,17 @@ const App = () => {
     setDeposits(prev => ({ ...prev, [key]: parseInt(value) || 0 }));
   };
 
+  // NEW: Subject Toggle Handler
+  const toggleSubject = (studentId, subjectKey) => {
+    setStudents(prev => prev.map(s => {
+      if (s.id !== studentId) return s;
+      const newSubjects = s.subjects.includes(subjectKey)
+        ? s.subjects.filter(sub => sub !== subjectKey)
+        : [...s.subjects, subjectKey];
+      return { ...s, subjects: newSubjects };
+    }));
+  };
+
   // AI & Modals...
   const handleGenerateReport = async () => { 
     setAiTitle(`✨ ${year}年${month + 1}月 財務智能分析報告`);
@@ -548,9 +559,27 @@ const App = () => {
                     const stats = getMonthlyStats(student.id);
                     return (
                         <tr key={student.id} className="hover:bg-gray-50 group">
-                            <td className="sticky left-0 z-20 bg-white border-b border-r p-2 font-medium flex justify-between items-center group-hover:bg-gray-50">
-                                {student.name}
-                                <button onClick={() => handleDeleteClick(student)} className="opacity-0 group-hover:opacity-100 text-red-400"><Trash2 className="w-3 h-3"/></button>
+                            <td className="sticky left-0 z-20 bg-white border-b border-r p-2 font-medium flex-col justify-center group-hover:bg-gray-50">
+                                <div className="flex justify-between items-center w-full">
+                                    <span>{student.name}</span>
+                                    <button onClick={() => handleDeleteClick(student)} className="opacity-0 group-hover:opacity-100 text-red-400"><Trash2 className="w-3 h-3"/></button>
+                                </div>
+                                {/* Desktop Subject Toggles (Fixed: Added Back) */}
+                                <div className="flex gap-1 mt-1">
+                                  {Object.entries(SUBJECT_MAPPING).map(([key, info]) => (
+                                    <button
+                                      key={key}
+                                      onClick={() => toggleSubject(student.id, key)}
+                                      className={`text-[10px] px-1 rounded border transition-colors ${
+                                        student.subjects.includes(key) 
+                                          ? info.color 
+                                          : 'bg-white text-gray-300 border-gray-200'
+                                      }`}
+                                    >
+                                      {info.name}
+                                    </button>
+                                  ))}
+                                </div>
                             </td>
                             {daysInMonth.map(date => {
                                 const isBooked = bookings[`${student.id}_${formatDateKey(date)}`];
@@ -610,7 +639,26 @@ const App = () => {
                             </div>
                             <div>
                                 <div className="font-bold text-gray-800 text-lg">{student.name}</div>
-                                <div className="text-xs text-gray-500">{student.school}</div>
+                                <div className="text-xs text-gray-500 mb-1">{student.school}</div>
+                                {/* Mobile Subject Toggles (Fixed: Added Back) */}
+                                <div className="flex gap-1">
+                                  {Object.entries(SUBJECT_MAPPING).map(([key, info]) => (
+                                    <button
+                                      key={key}
+                                      onClick={(e) => {
+                                        e.stopPropagation(); // Prevent triggering row click if any
+                                        toggleSubject(student.id, key);
+                                      }}
+                                      className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                                        student.subjects.includes(key) 
+                                          ? info.color 
+                                          : 'bg-gray-50 text-gray-300 border-gray-200'
+                                      }`}
+                                    >
+                                      {info.name}
+                                    </button>
+                                  ))}
+                                </div>
                             </div>
                         </div>
 
