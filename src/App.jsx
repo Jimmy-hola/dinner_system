@@ -16,17 +16,26 @@ import {
   UserPlus,
   Trash2,
   X,
-  Sparkles,
-  MessageCircle,
-  Copy,
-  Loader2,
   AlertTriangle,
   Flag,           
   CalendarDays,
   Edit3,
   TrendingUp,
   Database,
-  Utensils
+  Utensils,
+  Copy,
+  ClipboardList, 
+  BellRing,      
+  CheckSquare,
+  FileText,
+  FilePenLine,
+  AlertCircle,
+  Filter,
+  Plus,
+  Palette,
+  Lock,
+  Unlock,
+  CalendarClock // 新增：自訂排程圖示
 } from 'lucide-react';
 
 // --- 🛠️ 樣式救援區 (Style Rescue) ---
@@ -39,41 +48,24 @@ if (typeof document !== 'undefined') {
   }
 }
 
-// --- 0. Gemini API Utility ---
-const callGemini = async (prompt) => {
-  const apiKey = ""; // The execution environment provides the key at runtime.
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+// --- 0. Constants & Defaults ---
 
-  const payload = { contents: [{ parts: [{ text: prompt }] }] };
-
-  const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-  const maxRetries = 3;
-  let attempt = 0;
-
-  while (attempt < maxRetries) {
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const result = await response.json();
-      return result.candidates?.[0]?.content?.parts?.[0]?.text || "無法產生回應，請稍後再試。";
-    } catch (error) {
-      console.error(`Attempt ${attempt + 1} failed:`, error);
-      attempt++;
-      if (attempt < maxRetries) await delay(1000 * Math.pow(2, attempt));
-    }
-  }
-  return "AI 服務目前繁忙，請檢查網路連線或稍後再試。";
+const INITIAL_SUBJECTS_CONFIG = {
+  physics: { label: '理化', days: [1, 4], color: 'blue' }, 
+  english: { label: '英文', days: [2, 5], color: 'green' },
+  math:    { label: '數學', days: [3],    color: 'red' }
 };
 
-// --- 1. 資料初始化與解析 ---
-const SUBJECT_MAPPING = {
-  physics: { name: '理化', days: [1, 4], color: 'bg-blue-100 text-blue-800 border-blue-200' }, 
-  english: { name: '英文', days: [2, 5], color: 'bg-green-100 text-green-800 border-green-200' },
-  math:    { name: '數學', days: [3],    color: 'bg-red-100 text-red-800 border-red-200' }
+const COLOR_THEMES = {
+  blue:   { bg: 'bg-blue-100', text: 'text-blue-800', border: 'border-blue-200', dot: 'bg-blue-500' },
+  green:  { bg: 'bg-green-100', text: 'text-green-800', border: 'border-green-200', dot: 'bg-green-500' },
+  red:    { bg: 'bg-red-100', text: 'text-red-800', border: 'border-red-200', dot: 'bg-red-500' },
+  yellow: { bg: 'bg-yellow-100', text: 'text-yellow-800', border: 'border-yellow-200', dot: 'bg-yellow-500' },
+  purple: { bg: 'bg-purple-100', text: 'text-purple-800', border: 'border-purple-200', dot: 'bg-purple-500' },
+  pink:   { bg: 'bg-pink-100', text: 'text-pink-800', border: 'border-pink-200', dot: 'bg-pink-500' },
+  orange: { bg: 'bg-orange-100', text: 'text-orange-800', border: 'border-orange-200', dot: 'bg-orange-500' },
+  teal:   { bg: 'bg-teal-100', text: 'text-teal-800', border: 'border-teal-200', dot: 'bg-teal-500' },
+  gray:   { bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-200', dot: 'bg-gray-500' },
 };
 
 const parseScheduleString = (str) => {
@@ -101,7 +93,7 @@ const INITIAL_STUDENTS = [
   { id: 12, name: '沈妍希', school: '苓雅', rawDays: '' },
   { id: 13, name: '吳婉鈺', school: '苓雅', rawDays: '' },
   { id: 14, name: '王增婕', school: '獅甲', rawDays: '' },
-].map(s => ({ ...s, subjects: parseScheduleString(s.rawDays) }));
+].map(s => ({ ...s, subjects: parseScheduleString(s.rawDays), customSchedule: null })); // Init with null
 
 const INITIAL_EVENT_TYPES = {
   holiday: { label: '國定假日', color: 'bg-red-100 text-red-700 border-red-200' },
@@ -128,21 +120,43 @@ const App = () => {
 
   // --- State Management ---
   
-  // 1. 初始化當前月份 (自動抓取現在時間)
   const [currentDate, setCurrentDate] = useState(() => {
     const now = new Date();
-    // 預設為當前月份的 1 號，避免月底切換月份時的 Bug
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
 
-  // 2. 初始化手機版選定日期 (自動抓取今天)
   const [selectedDay, setSelectedDay] = useState(new Date()); 
+
+  const [subjectsConfig, setSubjectsConfig] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            return parsed.subjectsConfig || INITIAL_SUBJECTS_CONFIG;
+        } catch (e) { return INITIAL_SUBJECTS_CONFIG; }
+    }
+    return INITIAL_SUBJECTS_CONFIG;
+  });
 
   const [students, setStudents] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) { try { return JSON.parse(saved).students || INITIAL_STUDENTS; } catch (e) { return INITIAL_STUDENTS; } }
+    if (saved) { 
+      try { 
+        const parsed = JSON.parse(saved);
+        const loadedStudents = parsed.students || INITIAL_STUDENTS;
+        return loadedStudents.map(s => ({
+          ...s,
+          subjects: Array.isArray(s.subjects) ? s.subjects : [],
+          customSchedule: Array.isArray(s.customSchedule) ? s.customSchedule : null // Data Migration
+        }));
+      } catch (e) { 
+        console.error("Load error", e); 
+        return INITIAL_STUDENTS; 
+      } 
+    }
     return INITIAL_STUDENTS;
   });
+
   const [bookings, setBookings] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     return saved ? JSON.parse(saved).bookings || {} : {};
@@ -164,7 +178,39 @@ const App = () => {
     return saved ? JSON.parse(saved).eventTypes || INITIAL_EVENT_TYPES : INITIAL_EVENT_TYPES;
   });
 
+  // Change Logging States
+  const [pendingTodos, setPendingTodos] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? JSON.parse(saved).pendingTodos || [] : [];
+  });
+  const [changeLogs, setChangeLogs] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? JSON.parse(saved).changeLogs || [] : [];
+  });
+
+  const [isTrackingMode, setIsTrackingMode] = useState(false);
+  const [showTodoModal, setShowTodoModal] = useState(false);
+  
+  // 異動確認視窗狀態
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    studentId: null,
+    studentName: '',
+    date: null,
+    actionType: '',
+    note: ''
+  });
+
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [selectedHistoryStudent, setSelectedHistoryStudent] = useState(null);
+  const [historyFilterDate, setHistoryFilterDate] = useState(null);
+
+  // 🔥 新增：個人自訂排程視窗
+  const [showCustomScheduleModal, setShowCustomScheduleModal] = useState(false);
+  const [selectedCustomStudent, setSelectedCustomStudent] = useState(null);
+
   const [showSettings, setShowSettings] = useState(false);
+  const [isEditingSubjects, setIsEditingSubjects] = useState(false);
   const [editingDate, setEditingDate] = useState(null); 
   const [showSpecialDatesList, setShowSpecialDatesList] = useState(false); 
   const [showAddStudent, setShowAddStudent] = useState(false);
@@ -172,20 +218,40 @@ const App = () => {
   const [newStudentSchool, setNewStudentSchool] = useState('');
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [studentToDelete, setStudentToDelete] = useState(null);
-  const [aiModalOpen, setAiModalOpen] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiContent, setAiContent] = useState('');
-  const [aiTitle, setAiTitle] = useState('');
   const [lastSaved, setLastSaved] = useState(null);
 
   // Persistence
   useEffect(() => {
-    const dataToSave = { students, bookings, deposits, mealPrice, specialDates, eventTypes, lastUpdated: new Date().toISOString() };
+    const dataToSave = { 
+      students, bookings, deposits, mealPrice, specialDates, eventTypes, pendingTodos, changeLogs, subjectsConfig,
+      lastUpdated: new Date().toISOString() 
+    };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
       setLastSaved(new Date());
     } catch (err) { console.error("Save failed", err); }
-  }, [students, bookings, deposits, mealPrice, specialDates, eventTypes]);
+  }, [students, bookings, deposits, mealPrice, specialDates, eventTypes, pendingTodos, changeLogs, subjectsConfig]);
+
+  // Self-Healing
+  useEffect(() => {
+    setStudents(prevStudents => {
+      let needsFix = false;
+      const fixedStudents = prevStudents.map(s => {
+        let fixed = { ...s };
+        if (!Array.isArray(s.subjects)) {
+          needsFix = true;
+          fixed.subjects = [];
+        }
+        // Ensure customSchedule field exists (can be null)
+        if (s.customSchedule === undefined) {
+          needsFix = true;
+          fixed.customSchedule = null;
+        }
+        return fixed;
+      });
+      return needsFix ? fixedStudents : prevStudents;
+    });
+  }, []);
 
   // Helpers
   const year = currentDate.getFullYear();
@@ -207,48 +273,94 @@ const App = () => {
   const getWeekdayLabel = (date) => new Intl.DateTimeFormat('zh-TW', { weekday: 'narrow' }).format(date);
   const getSpecialDateInfo = (date) => specialDates[formatDateKey(date)];
 
-  // Auto Schedule Logic
-  const shouldBookBasedOnSubjects = useCallback((student, date) => {
+  const hasChangesInMonth = useCallback((studentId) => {
+    return changeLogs.some(log => 
+      log.studentId === studentId && 
+      log.targetDate.startsWith(monthKey)
+    );
+  }, [changeLogs, monthKey]);
+
+  const hasChangesOnDate = useCallback((studentId, dateKey) => {
+    return changeLogs.some(log => 
+      log.studentId === studentId && 
+      log.targetDate === dateKey
+    );
+  }, [changeLogs]);
+
+  // 🔥 Auto Schedule Logic (Updated with Custom Schedule Priority)
+  const shouldBookBasedOnRules = useCallback((student, date) => {
     const day = getDayOfWeek(date);
-    return student.subjects.some(subKey => SUBJECT_MAPPING[subKey].days.includes(day));
-  }, []);
+    
+    // Priority 1: Check Custom Schedule
+    if (student.customSchedule && Array.isArray(student.customSchedule)) {
+        return student.customSchedule.includes(day);
+    }
+
+    // Priority 2: Fallback to Subject Config
+    if (!student.subjects || !Array.isArray(student.subjects)) return false;
+    return student.subjects.some(subKey => subjectsConfig[subKey]?.days.includes(day));
+  }, [subjectsConfig]);
 
   const applyAutoSchedule = (studentId) => {
+    if (isTrackingMode) {
+      alert("⚠️ 功能受限：請先關閉右上角的『追蹤模式』，才能進行自動排程。");
+      return;
+    }
+
     const student = students.find(s => s.id === studentId);
     if (!student) return;
-    const newBookings = { ...bookings };
-    daysInMonth.forEach(date => {
-      const dateKey = formatDateKey(date);
-      const bookingKey = `${studentId}_${dateKey}`;
-      const day = getDayOfWeek(date);
-      if (day !== 0 && day !== 6) {
-        if (shouldBookBasedOnSubjects(student, date)) newBookings[bookingKey] = true;
-        else delete newBookings[bookingKey];
-      }
+    
+    const scheduleSource = student.customSchedule ? "個人自訂排程" : "科目設定";
+    if (!window.confirm(`確定要為「${student.name}」重置本月排程嗎？\n系統將依據【${scheduleSource}】重新打勾。`)) return;
+
+    setBookings(prevBookings => {
+      const newBookings = { ...prevBookings };
+      daysInMonth.forEach(date => {
+        const dateKey = formatDateKey(date);
+        const bookingKey = `${studentId}_${dateKey}`;
+        const day = getDayOfWeek(date);
+        if (day !== 0 && day !== 6) {
+           if (shouldBookBasedOnRules(student, date)) {
+             newBookings[bookingKey] = true;
+           } else {
+             delete newBookings[bookingKey];
+           }
+        }
+      });
+      return newBookings;
     });
-    setBookings(newBookings);
   };
 
   const applyAutoScheduleAll = () => {
-    if (window.confirm(`確定要根據科目設定重置 ${year}年${month+1}月 紀錄嗎？`)) {
-      const newBookings = { ...bookings };
-      students.forEach(student => {
-        daysInMonth.forEach(date => {
-          const dateKey = formatDateKey(date);
-          const bookingKey = `${student.id}_${dateKey}`;
-          const day = getDayOfWeek(date);
-          if (day !== 0 && day !== 6 && shouldBookBasedOnSubjects(student, date)) {
-            newBookings[bookingKey] = true;
-          } else if (day !== 0 && day !== 6) {
-             delete newBookings[bookingKey];
-          }
+    if (isTrackingMode) {
+      alert("⚠️ 功能受限：請先關閉右上角的『追蹤模式』，才能進行全班自動排程。");
+      return;
+    }
+
+    if (window.confirm(`確定要重置 ${year}年${month+1}月 的所有平日訂餐嗎？\n(有自訂排程者將優先採用，其餘依科目設定)`)) {
+      setBookings(prevBookings => {
+        const newBookings = { ...prevBookings };
+        students.forEach(student => {
+          daysInMonth.forEach(date => {
+            const dateKey = formatDateKey(date);
+            const bookingKey = `${student.id}_${dateKey}`;
+            const day = getDayOfWeek(date);
+            if (day !== 0 && day !== 6) {
+              const shouldBook = shouldBookBasedOnRules(student, date);
+              if (shouldBook) {
+                newBookings[bookingKey] = true;
+              } else {
+                delete newBookings[bookingKey];
+              }
+            }
+          });
         });
+        return newBookings;
       });
-      setBookings(newBookings);
+      alert(`排程完成！已更新本月訂餐紀錄。`);
     }
   };
 
-  // Financial Logic
   const calculateOpeningBalance = (studentId) => {
     const startYear = 2025;
     const startMonth = 2; 
@@ -300,6 +412,21 @@ const App = () => {
   // Handlers
   const toggleBooking = (studentId, date) => {
     const key = `${studentId}_${formatDateKey(date)}`;
+    const isCurrentlyBooked = bookings[key];
+    
+    if (isTrackingMode) {
+      const student = students.find(s => s.id === studentId);
+      setConfirmModal({
+        isOpen: true,
+        studentId,
+        studentName: student ? student.name : '未知',
+        date,
+        actionType: isCurrentlyBooked ? '取消訂餐' : '新增訂餐',
+        note: ''
+      });
+      return; 
+    }
+
     setBookings(prev => {
       const next = { ...prev };
       if (next[key]) delete next[key]; else next[key] = true;
@@ -307,12 +434,106 @@ const App = () => {
     });
   };
 
+  const handleConfirmAction = () => {
+    const { studentId, date, actionType, note } = confirmModal;
+    const dateKey = formatDateKey(date);
+    const key = `${studentId}_${dateKey}`;
+    const timestamp = new Date().toLocaleString();
+
+    setBookings(prev => {
+      const next = { ...prev };
+      if (next[key]) delete next[key]; else next[key] = true;
+      return next;
+    });
+
+    const newTodo = {
+      id: Date.now(),
+      studentName: confirmModal.studentName,
+      dateStr: `${date.getMonth() + 1}/${date.getDate()} (${getWeekdayLabel(date)})`,
+      action: actionType,
+      timestamp: timestamp,
+      isDone: false
+    };
+    setPendingTodos(prev => [newTodo, ...prev]);
+
+    const newLog = {
+      id: Date.now() + 1,
+      studentId: studentId,
+      studentName: confirmModal.studentName,
+      targetDate: dateKey,
+      displayDate: `${date.getMonth() + 1}/${date.getDate()}`,
+      action: actionType,
+      timestamp: timestamp,
+      note: note 
+    };
+    setChangeLogs(prev => [newLog, ...prev]);
+
+    setConfirmModal({ ...confirmModal, isOpen: false, note: '' });
+  };
+
+  const handleResolveTodo = (todoId) => {
+    setPendingTodos(prev => prev.filter(t => t.id !== todoId));
+  };
+
+  const handleClearAllTodos = () => {
+    if(window.confirm("確定要清空所有待辦事項嗎？請確認您已同步至紙本訂餐本。")) {
+      setPendingTodos([]);
+    }
+  }
+
+  const handleUpdateLogNote = (logId, newNote) => {
+    setChangeLogs(prevLogs => prevLogs.map(log => 
+      log.id === logId ? { ...log, note: newNote } : log
+    ));
+  };
+
+  const openHistoryModal = (e, studentId) => {
+    e.stopPropagation();
+    const student = students.find(s => s.id === studentId);
+    if (student) {
+      setSelectedHistoryStudent(student);
+      setHistoryFilterDate(null); 
+      setShowHistoryModal(true);
+    }
+  };
+
+  const openHistoryForDate = (e, studentId, dateKey) => {
+    e.stopPropagation();
+    const student = students.find(s => s.id === studentId);
+    if (student) {
+      setSelectedHistoryStudent(student);
+      setHistoryFilterDate(dateKey); 
+      setShowHistoryModal(true);
+    }
+  };
+
+  // 🔥 開啟自訂排程視窗
+  const openCustomScheduleModal = (e, studentId) => {
+    e.stopPropagation();
+    if (isTrackingMode) {
+        alert("⚠️ 功能受限：請先關閉『追蹤模式』才能修改排程設定。");
+        return;
+    }
+    const student = students.find(s => s.id === studentId);
+    if (student) {
+      setSelectedCustomStudent(student);
+      setShowCustomScheduleModal(true);
+    }
+  };
+
+  // 🔥 儲存自訂排程
+  const handleSaveCustomSchedule = (studentId, newSchedule) => {
+    setStudents(prev => prev.map(s => 
+        s.id === studentId ? { ...s, customSchedule: newSchedule } : s
+    ));
+    setShowCustomScheduleModal(false);
+  };
+
   const changeMonth = (delta) => {
     const newDate = new Date(currentDate);
     newDate.setDate(1); 
     newDate.setMonth(newDate.getMonth() + delta);
     setCurrentDate(newDate);
-    // Sync selected day for mobile
     const newSelected = new Date(selectedDay);
     newSelected.setMonth(newSelected.getMonth() + delta);
     setSelectedDay(newSelected);
@@ -321,7 +542,6 @@ const App = () => {
   const changeSelectedDay = (delta) => {
     const newDate = new Date(selectedDay);
     newDate.setDate(newDate.getDate() + delta);
-    // If month changes, update calendar
     if (newDate.getMonth() !== currentDate.getMonth()) {
         setCurrentDate(new Date(newDate.getFullYear(), newDate.getMonth(), 1));
     }
@@ -331,7 +551,7 @@ const App = () => {
   const handleAddStudent = () => {
     if (!newStudentName.trim()) { alert('請輸入姓名'); return; }
     const maxId = students.length > 0 ? Math.max(...students.map(s => s.id)) : 0;
-    setStudents([...students, { id: maxId + 1, name: newStudentName, school: newStudentSchool || '未填寫', subjects: [], rawDays: '' }]);
+    setStudents([...students, { id: maxId + 1, name: newStudentName, school: newStudentSchool || '未填寫', subjects: [], rawDays: '', customSchedule: null }]);
     setNewStudentName(''); setNewStudentSchool(''); setShowAddStudent(false);
   };
 
@@ -340,43 +560,24 @@ const App = () => {
     setDeposits(prev => ({ ...prev, [key]: parseInt(value) || 0 }));
   };
 
-  // NEW: Subject Toggle Handler
   const toggleSubject = (studentId, subjectKey) => {
+    if (isTrackingMode) {
+      alert("⚠️ 功能受限：請先關閉『追蹤模式』才能修改科目設定。");
+      return;
+    }
+
     setStudents(prev => prev.map(s => {
       if (s.id !== studentId) return s;
-      const newSubjects = s.subjects.includes(subjectKey)
-        ? s.subjects.filter(sub => sub !== subjectKey)
-        : [...s.subjects, subjectKey];
+      const currentSubjects = Array.isArray(s.subjects) ? s.subjects : [];
+      const newSubjects = currentSubjects.includes(subjectKey)
+        ? currentSubjects.filter(sub => sub !== subjectKey)
+        : [...currentSubjects, subjectKey];
       return { ...s, subjects: newSubjects };
     }));
   };
 
-  // AI & Modals...
-  const handleGenerateReport = async () => { 
-    setAiTitle(`✨ ${year}年${month + 1}月 財務智能分析報告`);
-    setAiContent(''); setAiModalOpen(true); setAiLoading(true);
-    let totalCost = 0; let totalPaid = 0; let totalBalance = 0;
-    const studentStatus = students.map(s => {
-      const stats = getMonthlyStats(s.id);
-      totalCost += stats.cost; totalPaid += stats.paid; totalBalance += stats.closing;
-      return { name: s.name, balance: stats.closing };
-    });
-    const debtors = studentStatus.filter(s => s.balance < 0).map(s => `${s.name}(欠${Math.abs(s.balance)})`).join(', ');
-    const prompt = `你是一位補習班財務顧問。${year}年${month+1}月數據：應收${totalCost}, 實收${totalPaid}, 總結餘${totalBalance}, 欠費者:${debtors||"無"}。請用繁體中文給出簡短財務分析與催繳建議。`;
-    const result = await callGemini(prompt);
-    setAiContent(result); setAiLoading(false);
-  };
-
-  const handleGenerateReminder = async (studentName, balance) => {
-    setAiTitle(`✨ 產生催繳通知 - ${studentName}`);
-    setAiContent(''); setAiModalOpen(true); setAiLoading(true);
-    const prompt = `請為補習班撰寫給家長的催繳訊息。學生:${studentName}, 月份:${year}年${month+1}月, 欠費:${Math.abs(balance)}元。語氣委婉禮貌，適合Line。繁體中文。`;
-    const result = await callGemini(prompt);
-    setAiContent(result); setAiLoading(false);
-  };
-
   const exportData = () => {
-    const data = { students, bookings, deposits, mealPrice, specialDates, eventTypes };
+    const data = { students, bookings, deposits, mealPrice, specialDates, eventTypes, pendingTodos, changeLogs, subjectsConfig };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -396,6 +597,9 @@ const App = () => {
         if (data.mealPrice) setMealPrice(data.mealPrice);
         if (data.specialDates) setSpecialDates(data.specialDates);
         if (data.eventTypes) setEventTypes(data.eventTypes);
+        if (data.pendingTodos) setPendingTodos(data.pendingTodos);
+        if (data.changeLogs) setChangeLogs(data.changeLogs); 
+        if (data.subjectsConfig) setSubjectsConfig(data.subjectsConfig); 
         alert("資料匯入成功！");
       } catch (err) { alert("資料格式錯誤"); }
     };
@@ -437,11 +641,129 @@ const App = () => {
   const handleEventTypeChange = (key, newLabel) => {
     setEventTypes(prev => ({ ...prev, [key]: { ...prev[key], label: newLabel } }));
   };
+
+  const copyDailySummary = () => {
+    const dateStr = `${selectedDay.getMonth()+1}/${selectedDay.getDate()}`;
+    const dateKey = formatDateKey(selectedDay);
+    const bookedStudents = students.filter(s => bookings[`${s.id}_${dateKey}`]);
+    
+    if (bookedStudents.length === 0) {
+      alert(`${dateStr} 尚無人訂餐`);
+      return;
+    }
+
+    const text = `📅 ${dateStr} (${getWeekdayLabel(selectedDay)}) 訂餐統計\n🍱 總份數：${bookedStudents.length} 份\n📝 名單：\n${bookedStudents.map(s => s.name).join('、')}\n💰 總金額：${bookedStudents.length * mealPrice} 元`;
+
+    navigator.clipboard.writeText(text).then(() => {
+      alert('✅ 已複製訂餐資訊到剪貼簿！');
+    }).catch(err => {
+      console.error('複製失敗:', err);
+      alert('複製失敗，請手動選取');
+    });
+  };
+
+  // Subject Config Handlers
+  const handleUpdateSubject = (key, field, value) => {
+    setSubjectsConfig(prev => ({
+      ...prev,
+      [key]: { ...prev[key], [field]: value }
+    }));
+  };
+
+  const handleToggleSubjectDay = (key, day) => {
+    setSubjectsConfig(prev => {
+        const currentDays = prev[key].days;
+        const newDays = currentDays.includes(day) 
+            ? currentDays.filter(d => d !== day) 
+            : [...currentDays, day].sort();
+        return { ...prev, [key]: { ...prev[key], days: newDays } };
+    });
+  };
+
+  const handleAddSubject = () => {
+    const newId = `sub_${Date.now()}`;
+    setSubjectsConfig(prev => ({
+        ...prev,
+        [newId]: { label: '新科目', days: [], color: 'gray' }
+    }));
+  };
+
+  const handleDeleteSubject = (key) => {
+    if (window.confirm("確定刪除此科目規則嗎？這不會刪除學生的訂餐紀錄，但會移除該科目的自動排程設定。")) {
+        const newConfig = { ...subjectsConfig };
+        delete newConfig[key];
+        setSubjectsConfig(newConfig);
+    }
+  };
   
   // --- UI Components ---
 
   const currentSpecialInfo = getSpecialDateInfo(selectedDay);
   const currentDailyCount = dailyStats.daily[formatDateKey(selectedDay)] || 0;
+
+  // Custom Schedule Modal Component
+  const CustomScheduleModal = () => {
+    if (!showCustomScheduleModal || !selectedCustomStudent) return null;
+    const currentSchedule = selectedCustomStudent.customSchedule || [];
+
+    const toggleDay = (day) => {
+        let newSchedule = [...currentSchedule];
+        if (newSchedule.includes(day)) {
+            newSchedule = newSchedule.filter(d => d !== day);
+        } else {
+            newSchedule.push(day);
+        }
+        // Save back to student (temporarily in memory, actually saved via handleSave)
+        handleSaveCustomSchedule(selectedCustomStudent.id, newSchedule.length > 0 ? newSchedule : []);
+    };
+
+    const clearCustom = () => {
+        handleSaveCustomSchedule(selectedCustomStudent.id, null);
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl">
+                <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
+                    <CalendarClock className="w-5 h-5 text-indigo-600"/>
+                    設定個人排程
+                </h3>
+                <p className="text-gray-600 mb-4 font-bold text-xl">{selectedCustomStudent.name}</p>
+                
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
+                    <p>若設定此排程，自動排程時將<strong>忽略科目設定</strong>，僅依據下方勾選的星期進行訂餐。</p>
+                </div>
+
+                <label className="block text-sm font-bold text-gray-700 mb-2">固定訂餐日</label>
+                <div className="flex justify-between mb-6">
+                    {[1, 2, 3, 4, 5, 6, 0].map(day => (
+                        <button
+                            key={day}
+                            onClick={() => toggleDay(day)}
+                            className={`
+                                w-8 h-8 rounded-full font-bold transition-all border
+                                ${currentSchedule && currentSchedule.includes(day) 
+                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' 
+                                    : 'bg-white text-gray-400 border-gray-200 hover:border-gray-400'}
+                            `}
+                        >
+                            {day === 0 ? '日' : ['一','二','三','四','五','六'][day-1]}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="flex flex-col gap-2">
+                    <button onClick={() => setShowCustomScheduleModal(false)} className="w-full py-2 bg-indigo-600 text-white rounded-md font-bold hover:bg-indigo-700">
+                        完成設定
+                    </button>
+                    <button onClick={clearCustom} className="w-full py-2 text-gray-500 hover:bg-gray-100 rounded-md text-sm">
+                        清除自訂 (恢復跟隨科目)
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+  };
 
   return (
     <div className="flex flex-col h-screen bg-gray-50 text-slate-800 font-sans overflow-hidden">
@@ -454,14 +776,35 @@ const App = () => {
             </div>
             <h1 className="text-lg font-bold text-gray-800 hidden sm:block">補習班智能訂餐</h1>
             <h1 className="text-lg font-bold text-gray-800 sm:hidden">訂餐系統</h1>
-            {lastSaved && (
-              <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full flex items-center gap-1 animate-in fade-in">
-                <Database className="w-3 h-3" /> 已儲存
-              </span>
-            )}
+            {/* 追蹤模式開關 (Toggle Switch) */}
+            <div 
+              onClick={() => setIsTrackingMode(!isTrackingMode)}
+              className={`
+                cursor-pointer flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all select-none
+                ${isTrackingMode ? 'bg-red-50 border-red-200 text-red-600' : 'bg-gray-100 border-gray-200 text-gray-500'}
+              `}
+              title="開啟後，任何修改都會強制跳出確認視窗，且禁止使用自動排程"
+            >
+              <BellRing className={`w-4 h-4 ${isTrackingMode ? 'fill-red-600 animate-pulse' : ''}`} />
+              <span className="text-xs font-bold hidden sm:inline">{isTrackingMode ? '追蹤中' : '追蹤關閉'}</span>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
+             {/* Todo List Button */}
+             <button 
+                onClick={() => setShowTodoModal(true)} 
+                className="p-2 text-gray-600 hover:bg-gray-100 rounded-full relative"
+                title="待辦事項 (紙本同步)"
+             >
+               <ClipboardList className="w-5 h-5" />
+               {pendingTodos.length > 0 && (
+                 <span className="absolute top-0 right-0 w-4 h-4 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full font-bold">
+                   {pendingTodos.length}
+                 </span>
+               )}
+             </button>
+
              <button onClick={() => setShowSettings(true)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full">
                <Settings className="w-5 h-5" />
              </button>
@@ -484,19 +827,28 @@ const App = () => {
           {/* Month Switcher (Always Visible) */}
           <div className="flex items-center justify-center bg-white rounded-lg border border-gray-300 p-1 shadow-sm w-full md:w-auto">
             <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-gray-50 rounded text-gray-600"><ChevronLeft className="w-5 h-5" /></button>
-            <span className="flex-1 text-center px-4 font-bold text-gray-700 min-w-[140px]">
-              {year}年 {month + 1}月
+            <span className="px-4 font-semibold text-lg min-w-[200px] text-center">
+              {year}年 <span className="text-sm font-normal text-gray-500">(民國{year-1911}年)</span> {month + 1}月
             </span>
             <button onClick={() => changeMonth(1)} className="p-2 hover:bg-gray-50 rounded text-gray-600"><ChevronRight className="w-5 h-5" /></button>
           </div>
 
-          {/* Desktop Tools */}
+          {/* Desktop Tools (Hidden on Mobile) */}
           <div className="hidden md:flex gap-2">
              <button onClick={() => setShowSpecialDatesList(true)} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-gray-300 rounded text-sm hover:bg-gray-50">
                 <Flag className="w-4 h-4 text-yellow-600" /> 行事曆
              </button>
-             <button onClick={applyAutoScheduleAll} className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded text-sm hover:bg-blue-100">
-                <Calculator className="w-4 h-4" /> 自動排程
+             {/* 🔒 鎖定狀態下的自動排程按鈕 */}
+             <button 
+                onClick={applyAutoScheduleAll} 
+                className={`flex items-center gap-1 px-3 py-1.5 border rounded text-sm transition-all ${
+                  isTrackingMode 
+                    ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' 
+                    : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                }`}
+                title={isTrackingMode ? "追蹤模式下無法自動排程" : "全班自動排程"}
+             >
+                <Calculator className="w-4 h-4" /> 全班自動排程
              </button>
           </div>
         </div>
@@ -550,45 +902,102 @@ const App = () => {
                   <th className="sticky top-0 z-30 min-w-[80px] p-2 border-b border-r bg-gray-100 text-xs font-bold text-gray-600 shadow-sm">統計</th>
                   <th className="sticky top-0 z-30 min-w-[80px] p-2 border-b border-r bg-gray-100 text-xs font-bold text-gray-600 shadow-sm">應繳</th>
                   <th className="sticky top-0 z-30 min-w-[80px] p-2 border-b border-r bg-gray-100 text-xs font-bold text-gray-600 shadow-sm">實繳</th>
-                  <th className="sticky top-0 z-30 min-w-[80px] p-2 border-b border-r bg-gray-100 text-xs font-bold text-gray-600 shadow-sm">期初</th>
-                  <th className="sticky top-0 z-30 min-w-[80px] p-2 border-b bg-indigo-50 text-xs font-bold text-indigo-700 shadow-sm">結餘</th>
+                  <th className="sticky top-0 z-30 min-w-[100px] p-2 border-b border-r bg-gray-100 text-xs font-bold text-gray-600 shadow-sm">期初</th>
+                  <th className="sticky top-0 z-30 min-w-[140px] p-2 border-b bg-indigo-50 text-xs font-bold text-indigo-700 shadow-sm">結餘</th>
                 </tr>
              </thead>
              <tbody>
                 {students.map(student => {
                     const stats = getMonthlyStats(student.id);
+                    const hasChanged = hasChangesInMonth(student.id);
+                    // 🔥 Check if custom schedule is active
+                    const hasCustomSchedule = student.customSchedule !== null;
+
                     return (
                         <tr key={student.id} className="hover:bg-gray-50 group">
                             <td className="sticky left-0 z-20 bg-white border-b border-r p-2 font-medium flex-col justify-center group-hover:bg-gray-50">
                                 <div className="flex justify-between items-center w-full">
-                                    <span>{student.name}</span>
-                                    <button onClick={() => handleDeleteClick(student)} className="opacity-0 group-hover:opacity-100 text-red-400"><Trash2 className="w-3 h-3"/></button>
+                                    <div className="flex items-center gap-1">
+                                        <span>{student.name}</span>
+                                        {/* 🔥 歷史異動按鈕 */}
+                                        <button 
+                                          onClick={(e) => openHistoryModal(e, student.id)}
+                                          className={`p-1 rounded-full transition-all ${hasChanged ? 'text-purple-600 bg-purple-50 hover:bg-purple-100 animate-pulse' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}
+                                          title="檢視異動紀錄"
+                                        >
+                                          <FileText className="w-4 h-4"/>
+                                        </button>
+                                        {/* 🔥 自訂排程按鈕 */}
+                                        <button 
+                                          onClick={(e) => openCustomScheduleModal(e, student.id)}
+                                          className={`p-1 rounded-full transition-all ${hasCustomSchedule ? 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}
+                                          title={hasCustomSchedule ? "已啟用個人排程" : "設定個人排程"}
+                                        >
+                                          <CalendarClock className="w-4 h-4"/>
+                                        </button>
+                                    </div>
+                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button 
+                                        onClick={() => applyAutoSchedule(student.id)} 
+                                        className={`p-1 rounded ${isTrackingMode ? 'text-gray-300 cursor-not-allowed' : 'text-blue-400 hover:bg-blue-50'}`}
+                                        title={isTrackingMode ? "追蹤模式下禁用" : "重新排程此學生"}
+                                      >
+                                        <RefreshCw className="w-3 h-3"/>
+                                      </button>
+                                      <button 
+                                        onClick={() => handleDeleteClick(student)} 
+                                        className="text-red-400 hover:bg-red-50 p-1 rounded" 
+                                        title="刪除學生"
+                                      >
+                                        <Trash2 className="w-3 h-3"/>
+                                      </button>
+                                    </div>
                                 </div>
-                                {/* Desktop Subject Toggles (Fixed: Added Back) */}
-                                <div className="flex gap-1 mt-1">
-                                  {Object.entries(SUBJECT_MAPPING).map(([key, info]) => (
-                                    <button
-                                      key={key}
-                                      onClick={() => toggleSubject(student.id, key)}
-                                      className={`text-[10px] px-1 rounded border transition-colors ${
-                                        student.subjects.includes(key) 
-                                          ? info.color 
-                                          : 'bg-white text-gray-300 border-gray-200'
-                                      }`}
-                                    >
-                                      {info.name}
-                                    </button>
-                                  ))}
-                                </div>
+                                {/* 🔥 Render Subject Toggles or Custom Schedule Indicator */}
+                                {hasCustomSchedule ? (
+                                    <div className="mt-1 text-xs text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 inline-block">
+                                        使用個人排程 (週{student.customSchedule.length > 0 ? student.customSchedule.map(d => d===0?'日':d).join('、') : '無'})
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-1 mt-1 flex-wrap">
+                                      {Object.entries(subjectsConfig).map(([key, info]) => (
+                                        <button
+                                          key={key}
+                                          onClick={() => toggleSubject(student.id, key)}
+                                          className={`text-[10px] px-1 rounded border transition-colors ${
+                                            isTrackingMode ? 'cursor-not-allowed opacity-50' : ''
+                                          } ${
+                                            student.subjects && student.subjects.includes(key) 
+                                              ? `${COLOR_THEMES[info.color].bg} ${COLOR_THEMES[info.color].text} ${COLOR_THEMES[info.color].border}` 
+                                              : 'bg-white text-gray-300 border-gray-200'
+                                          }`}
+                                        >
+                                          {info.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                )}
                             </td>
                             {daysInMonth.map(date => {
-                                const isBooked = bookings[`${student.id}_${formatDateKey(date)}`];
+                                const dateKey = formatDateKey(date);
+                                const isBooked = bookings[`${student.id}_${dateKey}`];
                                 const sp = getSpecialDateInfo(date);
                                 const isHoliday = sp && sp.type === 'holiday';
+                                const hasCellChange = hasChangesOnDate(student.id, dateKey);
+
                                 return (
                                     <td key={date.toString()} onClick={() => toggleBooking(student.id, date)} 
-                                        className={`border-b border-r text-center cursor-pointer ${isBooked ? 'bg-green-100' : ''} ${isHoliday ? 'bg-red-50' : ''}`}>
+                                        className={`border-b border-r text-center cursor-pointer relative ${isBooked ? 'bg-green-100' : ''} ${isHoliday ? 'bg-red-50' : ''}`}>
+                                        
                                         {isBooked && <CheckCircle2 className="w-5 h-5 text-green-600 mx-auto"/>}
+
+                                        {hasCellChange && (
+                                          <div 
+                                            onClick={(e) => openHistoryForDate(e, student.id, dateKey)}
+                                            className="absolute top-1 right-1 w-2 h-2 bg-orange-500 rounded-full hover:scale-125 transition-transform"
+                                            title="有點名異動，點擊查看"
+                                          ></div>
+                                        )}
                                     </td>
                                 )
                             })}
@@ -606,7 +1015,9 @@ const App = () => {
                   <td className="sticky left-0 z-50 bg-gray-50 border-b border-r border-gray-200 p-2 font-bold text-right text-xs">每日總數</td>
                   {daysInMonth.map(date => {
                     const c = dailyStats.daily[formatDateKey(date)] || 0;
-                    return <td key={date.toString()} className="border-b border-r text-center text-xs font-bold">{c > 0 ? c : '-'}</td>
+                    return <td key={date.toString()} className="border-b border-r text-center text-sm font-bold text-gray-700 py-2">
+                    {c > 0 ? c : '-'}
+                  </td>
                   })}
                   <td className="border-b bg-indigo-50 text-center font-bold">{dailyStats.totalCount}</td>
                   <td colSpan={4} className="border-b bg-gray-50"></td>
@@ -630,35 +1041,28 @@ const App = () => {
                 const isBooked = bookings[`${student.id}_${dateKey}`];
                 const specialInfo = getSpecialDateInfo(selectedDay);
                 const isHoliday = specialInfo && specialInfo.type === 'holiday';
+                const hasCellChange = hasChangesOnDate(student.id, dateKey);
 
                 return (
-                    <div key={student.id} className="flex items-center justify-between p-4 border-b border-gray-100 hover:bg-gray-50 active:bg-gray-100 transition-colors">
+                    <div key={student.id} className="flex items-center justify-between p-4 border-b border-gray-100 hover:bg-gray-50 active:bg-gray-100 transition-colors relative">
                         <div className="flex items-center gap-3">
                             <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold text-white ${isBooked ? 'bg-green-500' : 'bg-gray-300'}`}>
                                 {student.name[0]}
                             </div>
                             <div>
-                                <div className="font-bold text-gray-800 text-lg">{student.name}</div>
-                                <div className="text-xs text-gray-500 mb-1">{student.school}</div>
-                                {/* Mobile Subject Toggles (Fixed: Added Back) */}
-                                <div className="flex gap-1">
-                                  {Object.entries(SUBJECT_MAPPING).map(([key, info]) => (
-                                    <button
-                                      key={key}
-                                      onClick={(e) => {
-                                        e.stopPropagation(); // Prevent triggering row click if any
-                                        toggleSubject(student.id, key);
-                                      }}
-                                      className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                                        student.subjects.includes(key) 
-                                          ? info.color 
-                                          : 'bg-gray-50 text-gray-300 border-gray-200'
-                                      }`}
-                                    >
-                                      {info.name}
-                                    </button>
-                                  ))}
+                                <div className="flex items-center gap-2">
+                                    <div className="font-bold text-gray-800 text-lg">{student.name}</div>
+                                    {/* Mobile Change Indicator */}
+                                    {hasCellChange && (
+                                        <button 
+                                          onClick={(e) => openHistoryForDate(e, student.id, dateKey)}
+                                          className="p-1 rounded-full text-orange-500 bg-orange-50 animate-pulse"
+                                        >
+                                          <FileText className="w-4 h-4"/>
+                                        </button>
+                                    )}
                                 </div>
+                                <div className="text-xs text-gray-500 mb-1">{student.school}</div>
                             </div>
                         </div>
 
@@ -703,8 +1107,10 @@ const App = () => {
 
       {/* Mobile Footer Stats (Sticky) */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-[0_-4px_16px_rgba(0,0,0,0.1)] p-4 flex justify-between items-center z-50">
-         <div>
-            <div className="text-xs text-gray-500">今日訂餐</div>
+         <div onClick={copyDailySummary} className="cursor-pointer active:opacity-70 transition-opacity">
+            <div className="text-xs text-gray-500 flex items-center gap-1">
+                今日訂餐 <Copy className="w-3 h-3"/>
+            </div>
             <div className="text-2xl font-bold text-indigo-600 flex items-end gap-1">
                 {currentDailyCount} <span className="text-sm font-normal text-gray-400 mb-1">人</span>
             </div>
@@ -717,25 +1123,101 @@ const App = () => {
          </div>
       </div>
 
-      {/* Modals (Keeping simplified for space, logic remains) */}
+      {/* Modals */}
+      {/* ... Settings, AddStudent, DateEdit Modals ... */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl">
+            <div className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
                 <h3 className="font-bold text-lg mb-4">設定</h3>
-                <div className="mb-4">
-                    <label className="block text-sm text-gray-600 mb-1">單餐費用</label>
+                
+                {/* 1. 費用設定 */}
+                <div className="mb-6">
+                    <label className="block text-sm font-bold text-gray-700 mb-2">單餐費用</label>
                     <input type="number" value={mealPrice} onChange={(e) => setMealPrice(Number(e.target.value))} className="w-full border p-2 rounded"/>
                 </div>
-                {/* Event Type Editing UI */}
-                <div className="mb-4 space-y-2">
-                    <label className="block text-sm text-gray-600">標籤名稱</label>
-                    {Object.entries(eventTypes).map(([k,v]) => (
-                        <div key={k} className="flex gap-2"><div className={`w-4 h-4 rounded ${v.color.split(' ')[0].replace('text','bg').replace('100','500')}`}></div><input value={v.label} onChange={e=>handleEventTypeChange(k,e.target.value)} className="border rounded px-1 text-sm flex-1"/></div>
-                    ))}
+
+                {/* 2. 科目與排程管理 (Locked by Default) */}
+                <div className="mb-6 border-t border-gray-100 pt-4">
+                    <div className="flex justify-between items-center mb-3">
+                      <label className="block text-sm font-bold text-gray-700 flex items-center gap-2">
+                          <Edit3 className="w-4 h-4"/> 科目與排程管理
+                      </label>
+                      <button 
+                        onClick={() => setIsEditingSubjects(!isEditingSubjects)}
+                        className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${isEditingSubjects ? 'bg-red-100 text-red-600 font-bold' : 'bg-gray-100 text-gray-500'}`}
+                      >
+                        {isEditingSubjects ? <><Unlock className="w-3 h-3"/> 編輯中</> : <><Lock className="w-3 h-3"/> 解鎖編輯</>}
+                      </button>
+                    </div>
+
+                    {/* Mask for locking */}
+                    <div className={`space-y-4 transition-all duration-300 ${isEditingSubjects ? '' : 'opacity-50 pointer-events-none grayscale'}`}>
+                        {Object.entries(subjectsConfig).map(([key, info]) => (
+                            <div key={key} className="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                                {/* Header: Color, Name, Delete */}
+                                <div className="flex items-center gap-2 mb-2">
+                                    <button 
+                                        className={`w-5 h-5 rounded-full border-2 border-white shadow-sm ${COLOR_THEMES[info.color].dot}`}
+                                        title="點擊切換顏色"
+                                        onClick={() => {
+                                            const colors = Object.keys(COLOR_THEMES);
+                                            const nextColor = colors[(colors.indexOf(info.color) + 1) % colors.length];
+                                            handleUpdateSubject(key, 'color', nextColor);
+                                        }}
+                                    ></button>
+                                    <input 
+                                        value={info.label} 
+                                        onChange={e => handleUpdateSubject(key, 'label', e.target.value)} 
+                                        className="flex-1 bg-white border border-gray-300 rounded px-2 py-1 text-sm font-bold"
+                                    />
+                                    <button onClick={() => handleDeleteSubject(key)} className="text-gray-400 hover:text-red-500">
+                                        <Trash2 className="w-4 h-4"/>
+                                    </button>
+                                </div>
+                                {/* Days Selector */}
+                                <div className="flex justify-between">
+                                    {[1, 2, 3, 4, 5, 6, 0].map(day => (
+                                        <button
+                                            key={day}
+                                            onClick={() => handleToggleSubjectDay(key, day)}
+                                            className={`
+                                                w-6 h-6 rounded-full text-[10px] font-bold transition-all
+                                                ${info.days.includes(day) 
+                                                    ? 'bg-indigo-600 text-white shadow-md transform scale-110' 
+                                                    : 'bg-white text-gray-400 border border-gray-200'}
+                                            `}
+                                        >
+                                            {day === 0 ? '日' : ['一','二','三','四','五','六'][day-1]}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                        <button 
+                            onClick={handleAddSubject}
+                            className="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 font-bold hover:bg-gray-50 hover:text-indigo-600 hover:border-indigo-300 flex items-center justify-center gap-2"
+                        >
+                            <Plus className="w-4 h-4"/> 新增科目規則
+                        </button>
+                    </div>
                 </div>
-                <div className="flex gap-2">
-                    <button onClick={handleResetAllData} className="flex-1 bg-red-100 text-red-600 py-2 rounded">重置資料</button>
-                    <button onClick={() => setShowSettings(false)} className="flex-1 bg-gray-100 py-2 rounded">關閉</button>
+
+                {/* 3. 特殊日期標籤 (Label Editing) */}
+                <div className="mb-6 border-t border-gray-100 pt-4">
+                    <label className="block text-sm font-bold text-gray-700 mb-2">標籤名稱</label>
+                    <div className="space-y-2">
+                        {Object.entries(eventTypes).map(([k,v]) => (
+                            <div key={k} className="flex gap-2"><div className={`w-4 h-4 rounded ${v.color.split(' ')[0].replace('text','bg').replace('100','500')}`}></div><input value={v.label} onChange={e=>handleEventTypeChange(k,e.target.value)} className="border rounded px-1 text-sm flex-1"/></div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* 4. Reset */}
+                <div className="pt-2">
+                    <button onClick={handleResetAllData} className="w-full px-4 py-2 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors text-sm font-medium border border-red-200">
+                        清除所有資料 (重置)
+                    </button>
+                    <button onClick={() => setShowSettings(false)} className="w-full mt-2 px-4 py-2 bg-gray-100 rounded-md text-gray-600 text-sm font-medium">關閉</button>
                 </div>
             </div>
         </div>
@@ -771,24 +1253,6 @@ const App = () => {
               </div>
           </div>
       )}
-      {/* AI Modal */}
-      {aiModalOpen && (
-        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl p-6">
-             <div className="flex justify-between items-center mb-4 border-b pb-2">
-               <h3 className="font-bold text-lg flex items-center gap-2"><Sparkles className="w-5 h-5 text-purple-600"/> {aiTitle}</h3>
-               <button onClick={()=>setAiModalOpen(false)}><X/></button>
-             </div>
-             <div className="flex-1 overflow-y-auto whitespace-pre-wrap text-gray-700">
-               {aiLoading ? <div className="flex justify-center p-10"><Loader2 className="animate-spin text-purple-600"/></div> : aiContent}
-             </div>
-             <div className="mt-4 flex justify-end gap-2">
-                <button onClick={copyToClipboard} className="bg-purple-600 text-white px-4 py-2 rounded flex gap-2 items-center"><Copy className="w-4 h-4"/> 複製</button>
-                <button onClick={()=>setAiModalOpen(false)} className="bg-gray-100 px-4 py-2 rounded">關閉</button>
-             </div>
-          </div>
-        </div>
-      )}
       {/* Special Dates List Modal */}
       {showSpecialDatesList && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
@@ -821,6 +1285,187 @@ const App = () => {
            </div>
         </div>
       )}
+
+      {/* Todo List Modal */}
+      {showTodoModal && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+           <div className="bg-white rounded-xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl">
+              <div className="flex justify-between items-center p-4 border-b">
+                 <h3 className="font-bold text-lg flex items-center gap-2">
+                   <ClipboardList className="w-5 h-5 text-indigo-600"/> 待辦事項 (紙本同步)
+                 </h3>
+                 <button onClick={()=>setShowTodoModal(false)}><X/></button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+                 {pendingTodos.length === 0 ? (
+                   <div className="text-center text-gray-400 py-8">目前沒有待處理的異動</div>
+                 ) : (
+                   pendingTodos.map(todo => (
+                     <div key={todo.id} className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm flex justify-between items-start">
+                        <div>
+                          <div className="font-bold text-gray-800">{todo.studentName} <span className="font-normal text-gray-500 text-sm">({todo.dateStr})</span></div>
+                          <div className={`text-sm font-bold ${todo.action === '取消訂餐' ? 'text-red-500' : 'text-green-600'}`}>{todo.action}</div>
+                          <div className="text-xs text-gray-400 mt-1">{todo.timestamp}</div>
+                        </div>
+                        <button 
+                          onClick={() => handleResolveTodo(todo.id)}
+                          className="text-gray-400 hover:text-green-600 p-2"
+                          title="標記為已完成"
+                        >
+                          <CheckSquare className="w-6 h-6"/>
+                        </button>
+                     </div>
+                   ))
+                 )}
+              </div>
+              <div className="p-4 border-t bg-white rounded-b-xl flex justify-between items-center">
+                 <span className="text-xs text-gray-500">請記得同步修改紙本訂餐本</span>
+                 {pendingTodos.length > 0 && (
+                   <button onClick={handleClearAllTodos} className="text-sm text-red-500 font-bold hover:underline">全部清除</button>
+                 )}
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-4 backdrop-blur-sm">
+           <div className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95 duration-200 border-t-4 border-red-500">
+              <div className="text-center">
+                 <div className="bg-red-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <AlertCircle className="w-6 h-6 text-red-600" />
+                 </div>
+                 <h3 className="font-bold text-xl text-gray-900 mb-1">
+                   確認{confirmModal.actionType}？
+                 </h3>
+                 <p className="text-gray-600 font-medium text-lg mb-4">
+                   {confirmModal.studentName} <span className="text-sm text-gray-400">|</span> {confirmModal.date.getMonth()+1}/{confirmModal.date.getDate()}
+                 </p>
+                 
+                 <div className="bg-red-50 border border-red-100 rounded-lg p-3 mb-4 text-left">
+                    <p className="text-red-800 text-sm font-bold flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4"/> 
+                      請現在拿起筆！
+                    </p>
+                    <p className="text-red-600 text-xs mt-1">
+                      務必同步修改紙本訂餐表上的數字或名單。
+                    </p>
+                 </div>
+
+                 <div className="text-left mb-4">
+                    <label className="text-xs font-bold text-gray-500 mb-1 block">備註 (選填)</label>
+                    <input 
+                      type="text" 
+                      placeholder="例如：家長Line請假..." 
+                      className="w-full border border-gray-300 rounded p-2 text-sm focus:border-indigo-500 outline-none"
+                      value={confirmModal.note}
+                      onChange={(e) => setConfirmModal({...confirmModal, note: e.target.value})}
+                      autoFocus
+                    />
+                 </div>
+
+                 <div className="flex gap-3">
+                    <button 
+                      onClick={() => setConfirmModal({...confirmModal, isOpen: false})} 
+                      className="flex-1 py-2.5 border border-gray-300 rounded-lg text-gray-600 font-medium hover:bg-gray-50"
+                    >
+                      取消
+                    </button>
+                    <button 
+                      onClick={handleConfirmAction} 
+                      className="flex-1 py-2.5 bg-red-600 text-white rounded-lg font-bold hover:bg-red-700 shadow-md"
+                    >
+                      確認執行
+                    </button>
+                 </div>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* 🔥 新增：歷史紀錄視窗 (History Modal) */}
+      {showHistoryModal && selectedHistoryStudent && (
+        <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4">
+           <div className="bg-white rounded-xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl">
+              <div className="flex justify-between items-center p-4 border-b bg-purple-50 rounded-t-xl">
+                 <h3 className="font-bold text-lg flex items-center gap-2 text-purple-900">
+                   <FileText className="w-5 h-5 text-purple-600"/> 
+                   {selectedHistoryStudent.name} 的異動紀錄
+                 </h3>
+                 <button onClick={()=>setShowHistoryModal(false)}><X/></button>
+              </div>
+
+              {/* 篩選器提示 */}
+              {historyFilterDate && (
+                <div className="bg-yellow-50 px-4 py-2 border-b border-yellow-100 flex justify-between items-center">
+                  <span className="text-sm text-yellow-800 flex items-center gap-1">
+                    <Filter className="w-3 h-3"/> 僅顯示 {historyFilterDate.split('-').slice(1).join('/')} 的紀錄
+                  </span>
+                  <button 
+                    onClick={() => setHistoryFilterDate(null)}
+                    className="text-xs text-blue-600 underline"
+                  >
+                    顯示全部
+                  </button>
+                </div>
+              )}
+              
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
+                 {(() => {
+                    const studentLogs = changeLogs.filter(log => {
+                      if (log.studentId !== selectedHistoryStudent.id) return false;
+                      // 如果有設定篩選日期，只顯示該日期的紀錄
+                      if (historyFilterDate) return log.targetDate === historyFilterDate;
+                      // 否則顯示本月的紀錄
+                      return log.targetDate.startsWith(monthKey);
+                    });
+
+                    if (studentLogs.length === 0) {
+                      return <div className="text-center text-gray-400 py-10">
+                        {historyFilterDate ? '該日期無異動紀錄' : '本月尚無異動紀錄'}
+                      </div>;
+                    }
+
+                    return studentLogs.map(log => (
+                      <div key={log.id} className="border border-gray-100 rounded-lg p-3 hover:bg-gray-50 transition-colors">
+                         <div className="flex justify-between items-start mb-2">
+                            <div>
+                               <div className="font-bold text-gray-700 flex items-center gap-2">
+                                 {log.displayDate} 
+                                 <span className={`text-xs px-2 py-0.5 rounded-full ${log.action === '取消訂餐' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                                   {log.action}
+                                 </span>
+                               </div>
+                               <div className="text-xs text-gray-400 mt-1">{log.timestamp}</div>
+                            </div>
+                         </div>
+                         
+                         {/* 備註編輯區 */}
+                         <div className="flex items-center gap-2 mt-2">
+                            <FilePenLine className="w-4 h-4 text-gray-400" />
+                            <input 
+                              type="text" 
+                              placeholder="點此新增備註 (如：家長Line請假)..."
+                              value={log.note || ''}
+                              onChange={(e) => handleUpdateLogNote(log.id, e.target.value)}
+                              className="flex-1 text-sm border-b border-gray-200 focus:border-purple-500 outline-none bg-transparent py-1 text-gray-600 placeholder-gray-300"
+                            />
+                         </div>
+                      </div>
+                    ));
+                 })()}
+              </div>
+              
+              <div className="p-3 border-t bg-gray-50 rounded-b-xl text-center">
+                 <button onClick={()=>setShowHistoryModal(false)} className="px-6 py-2 bg-white border border-gray-300 rounded text-gray-600 hover:bg-gray-100">關閉</button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* Custom Schedule Modal */}
+      <CustomScheduleModal />
 
     </div>
   );
