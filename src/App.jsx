@@ -35,7 +35,10 @@ import {
   Palette,
   Lock,
   Unlock,
-  CalendarClock // 新增：自訂排程圖示
+  CalendarClock,
+  Eye,      // 新增：顯示圖示
+  EyeOff,   // 新增：隱藏圖示
+  Ghost     // 新增：幽靈圖示(代表備用帳號)
 } from 'lucide-react';
 
 // --- 🛠️ 樣式救援區 (Style Rescue) ---
@@ -93,7 +96,7 @@ const INITIAL_STUDENTS = [
   { id: 12, name: '沈妍希', school: '苓雅', rawDays: '' },
   { id: 13, name: '吳婉鈺', school: '苓雅', rawDays: '' },
   { id: 14, name: '王增婕', school: '獅甲', rawDays: '' },
-].map(s => ({ ...s, subjects: parseScheduleString(s.rawDays), customSchedule: null })); // Init with null
+].map(s => ({ ...s, subjects: parseScheduleString(s.rawDays), customSchedule: null })); 
 
 const INITIAL_EVENT_TYPES = {
   holiday: { label: '國定假日', color: 'bg-red-100 text-red-700 border-red-200' },
@@ -147,7 +150,7 @@ const App = () => {
         return loadedStudents.map(s => ({
           ...s,
           subjects: Array.isArray(s.subjects) ? s.subjects : [],
-          customSchedule: Array.isArray(s.customSchedule) ? s.customSchedule : null // Data Migration
+          customSchedule: Array.isArray(s.customSchedule) ? s.customSchedule : null 
         }));
       } catch (e) { 
         console.error("Load error", e); 
@@ -188,9 +191,12 @@ const App = () => {
     return saved ? JSON.parse(saved).changeLogs || [] : [];
   });
 
-  const [isTrackingMode, setIsTrackingMode] = useState(false);
+  const [isTrackingMode, setIsTrackingMode] = useState(true);
   const [showTodoModal, setShowTodoModal] = useState(false);
   
+  // 🔥 新增：是否顯示備用帳號 (預設關閉)
+  const [showSpareAccounts, setShowSpareAccounts] = useState(false);
+
   // 異動確認視窗狀態
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
@@ -205,9 +211,10 @@ const App = () => {
   const [selectedHistoryStudent, setSelectedHistoryStudent] = useState(null);
   const [historyFilterDate, setHistoryFilterDate] = useState(null);
 
-  // 🔥 新增：個人自訂排程視窗
+  // 個人自訂排程視窗 & 草稿狀態
   const [showCustomScheduleModal, setShowCustomScheduleModal] = useState(false);
   const [selectedCustomStudent, setSelectedCustomStudent] = useState(null);
+  const [draftSchedule, setDraftSchedule] = useState(null); 
 
   const [showSettings, setShowSettings] = useState(false);
   const [isEditingSubjects, setIsEditingSubjects] = useState(false);
@@ -242,7 +249,6 @@ const App = () => {
           needsFix = true;
           fixed.subjects = [];
         }
-        // Ensure customSchedule field exists (can be null)
         if (s.customSchedule === undefined) {
           needsFix = true;
           fixed.customSchedule = null;
@@ -273,6 +279,17 @@ const App = () => {
   const getWeekdayLabel = (date) => new Intl.DateTimeFormat('zh-TW', { weekday: 'narrow' }).format(date);
   const getSpecialDateInfo = (date) => specialDates[formatDateKey(date)];
 
+  // 🔥 過濾學生列表：決定顯示哪些學生
+  const visibleStudents = useMemo(() => {
+    return students.filter(s => {
+        // 如果學校是 "備用"，則根據開關決定是否顯示
+        if (s.school === '備用') {
+            return showSpareAccounts;
+        }
+        return true; // 正常學生永遠顯示
+    });
+  }, [students, showSpareAccounts]);
+
   const hasChangesInMonth = useCallback((studentId) => {
     return changeLogs.some(log => 
       log.studentId === studentId && 
@@ -287,7 +304,7 @@ const App = () => {
     );
   }, [changeLogs]);
 
-  // 🔥 Auto Schedule Logic (Updated with Custom Schedule Priority)
+  // Auto Schedule Logic
   const shouldBookBasedOnRules = useCallback((student, date) => {
     const day = getDayOfWeek(date);
     
@@ -507,7 +524,7 @@ const App = () => {
     }
   };
 
-  // 🔥 開啟自訂排程視窗
+  // Custom Schedule Modal
   const openCustomScheduleModal = (e, studentId) => {
     e.stopPropagation();
     if (isTrackingMode) {
@@ -517,16 +534,18 @@ const App = () => {
     const student = students.find(s => s.id === studentId);
     if (student) {
       setSelectedCustomStudent(student);
+      setDraftSchedule(student.customSchedule); 
       setShowCustomScheduleModal(true);
     }
   };
 
-  // 🔥 儲存自訂排程
-  const handleSaveCustomSchedule = (studentId, newSchedule) => {
+  const handleSaveCustomSchedule = () => {
+    if (!selectedCustomStudent) return;
     setStudents(prev => prev.map(s => 
-        s.id === studentId ? { ...s, customSchedule: newSchedule } : s
+        s.id === selectedCustomStudent.id ? { ...s, customSchedule: draftSchedule } : s
     ));
     setShowCustomScheduleModal(false);
+    setDraftSchedule(null);
   };
 
   const changeMonth = (delta) => {
@@ -553,6 +572,35 @@ const App = () => {
     const maxId = students.length > 0 ? Math.max(...students.map(s => s.id)) : 0;
     setStudents([...students, { id: maxId + 1, name: newStudentName, school: newStudentSchool || '未填寫', subjects: [], rawDays: '', customSchedule: null }]);
     setNewStudentName(''); setNewStudentSchool(''); setShowAddStudent(false);
+  };
+
+  // 🔥 產生備用帳號 (Batch Create)
+  const handleCreateSpareAccounts = () => {
+    const spares = [
+        { name: '臨時 A', school: '備用' },
+        { name: '臨時 B', school: '備用' },
+        { name: '臨時 C', school: '備用' }
+    ];
+    
+    // 檢查是否已存在
+    const existingSpares = students.filter(s => s.school === '備用');
+    if (existingSpares.length >= 3) {
+        alert("已經有足夠的備用帳號了！");
+        return;
+    }
+
+    const newStudents = spares.map((spare, index) => ({
+        id: Date.now() + index, // Unique ID
+        name: spare.name,
+        school: spare.school,
+        subjects: [],
+        rawDays: '',
+        customSchedule: null
+    }));
+
+    setStudents([...students, ...newStudents]);
+    alert("已建立 3 個備用帳號！");
+    setShowSpareAccounts(true); // 自動開啟顯示，讓使用者看到
   };
 
   const handleDepositChange = (studentId, value) => {
@@ -701,10 +749,12 @@ const App = () => {
   const currentSpecialInfo = getSpecialDateInfo(selectedDay);
   const currentDailyCount = dailyStats.daily[formatDateKey(selectedDay)] || 0;
 
-  // Custom Schedule Modal Component
+  // Custom Schedule Modal Component (Updated with Draft Logic)
   const CustomScheduleModal = () => {
     if (!showCustomScheduleModal || !selectedCustomStudent) return null;
-    const currentSchedule = selectedCustomStudent.customSchedule || [];
+    
+    // Use draftSchedule for rendering instead of direct student data
+    const currentSchedule = draftSchedule || [];
 
     const toggleDay = (day) => {
         let newSchedule = [...currentSchedule];
@@ -713,12 +763,11 @@ const App = () => {
         } else {
             newSchedule.push(day);
         }
-        // Save back to student (temporarily in memory, actually saved via handleSave)
-        handleSaveCustomSchedule(selectedCustomStudent.id, newSchedule.length > 0 ? newSchedule : []);
+        setDraftSchedule(newSchedule); // Update draft only
     };
 
     const clearCustom = () => {
-        handleSaveCustomSchedule(selectedCustomStudent.id, null);
+        setDraftSchedule(null); // Update draft to null
     };
 
     return (
@@ -752,8 +801,20 @@ const App = () => {
                     ))}
                 </div>
 
+                {/* Status Indicator for Draft */}
+                {draftSchedule === null && (
+                    <div className="text-center text-gray-500 text-sm mb-4">
+                        目前狀態：<span className="font-bold text-green-600">跟隨科目排程</span>
+                    </div>
+                )}
+                {draftSchedule !== null && draftSchedule.length === 0 && (
+                    <div className="text-center text-gray-500 text-sm mb-4">
+                        目前狀態：<span className="font-bold text-red-500">不訂餐 (空排程)</span>
+                    </div>
+                )}
+
                 <div className="flex flex-col gap-2">
-                    <button onClick={() => setShowCustomScheduleModal(false)} className="w-full py-2 bg-indigo-600 text-white rounded-md font-bold hover:bg-indigo-700">
+                    <button onClick={handleSaveCustomSchedule} className="w-full py-2 bg-indigo-600 text-white rounded-md font-bold hover:bg-indigo-700">
                         完成設定
                     </button>
                     <button onClick={clearCustom} className="w-full py-2 text-gray-500 hover:bg-gray-100 rounded-md text-sm">
@@ -885,7 +946,7 @@ const App = () => {
                 <tr>
                   <th className="sticky left-0 z-40 bg-white p-3 border-b border-r border-gray-200 min-w-[200px] text-left">
                      <div className="flex items-center justify-between">
-                        <span>學生 ({students.length})</span>
+                        <span>學生 ({visibleStudents.length})</span>
                         <button onClick={() => setShowAddStudent(true)} className="p-1 bg-indigo-50 text-indigo-600 rounded"><UserPlus className="w-4 h-4"/></button>
                      </div>
                   </th>
@@ -907,7 +968,7 @@ const App = () => {
                 </tr>
              </thead>
              <tbody>
-                {students.map(student => {
+                {visibleStudents.map(student => {
                     const stats = getMonthlyStats(student.id);
                     const hasChanged = hasChangesInMonth(student.id);
                     // 🔥 Check if custom schedule is active
@@ -918,8 +979,8 @@ const App = () => {
                             <td className="sticky left-0 z-20 bg-white border-b border-r p-2 font-medium flex-col justify-center group-hover:bg-gray-50">
                                 <div className="flex justify-between items-center w-full">
                                     <div className="flex items-center gap-1">
-                                        <span>{student.name}</span>
-                                        {/* 🔥 歷史異動按鈕 */}
+                                        <span className={student.school === '備用' ? 'text-gray-500 italic' : ''}>{student.name}</span>
+                                        {/* 🔥 歷史異動按鈕 (Desktop) */}
                                         <button 
                                           onClick={(e) => openHistoryModal(e, student.id)}
                                           className={`p-1 rounded-full transition-all ${hasChanged ? 'text-purple-600 bg-purple-50 hover:bg-purple-100 animate-pulse' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}
@@ -953,30 +1014,24 @@ const App = () => {
                                       </button>
                                     </div>
                                 </div>
-                                {/* 🔥 Render Subject Toggles or Custom Schedule Indicator */}
-                                {hasCustomSchedule ? (
-                                    <div className="mt-1 text-xs text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 inline-block">
-                                        使用個人排程 (週{student.customSchedule.length > 0 ? student.customSchedule.map(d => d===0?'日':d).join('、') : '無'})
-                                    </div>
-                                ) : (
-                                    <div className="flex gap-1 mt-1 flex-wrap">
-                                      {Object.entries(subjectsConfig).map(([key, info]) => (
-                                        <button
-                                          key={key}
-                                          onClick={() => toggleSubject(student.id, key)}
-                                          className={`text-[10px] px-1 rounded border transition-colors ${
-                                            isTrackingMode ? 'cursor-not-allowed opacity-50' : ''
-                                          } ${
-                                            student.subjects && student.subjects.includes(key) 
-                                              ? `${COLOR_THEMES[info.color].bg} ${COLOR_THEMES[info.color].text} ${COLOR_THEMES[info.color].border}` 
-                                              : 'bg-white text-gray-300 border-gray-200'
-                                          }`}
-                                        >
-                                          {info.label}
-                                        </button>
-                                      ))}
-                                    </div>
-                                )}
+                                {/* 🔥 Render Subject Toggles from Dynamic Config */}
+                                <div className="flex gap-1 mt-1 flex-wrap">
+                                  {Object.entries(subjectsConfig).map(([key, info]) => (
+                                    <button
+                                      key={key}
+                                      onClick={() => toggleSubject(student.id, key)}
+                                      className={`text-[10px] px-1 rounded border transition-colors ${
+                                        isTrackingMode ? 'cursor-not-allowed opacity-50' : ''
+                                      } ${
+                                        student.subjects && student.subjects.includes(key) 
+                                          ? `${COLOR_THEMES[info.color].bg} ${COLOR_THEMES[info.color].text} ${COLOR_THEMES[info.color].border}` 
+                                          : 'bg-white text-gray-300 border-gray-200'
+                                      }`}
+                                    >
+                                      {info.label}
+                                    </button>
+                                  ))}
+                                </div>
                             </td>
                             {daysInMonth.map(date => {
                                 const dateKey = formatDateKey(date);
@@ -1036,7 +1091,7 @@ const App = () => {
 
         {/* VIEW 2: MOBILE CARD LIST (Visible only on Mobile) */}
         <div className="md:hidden pb-24">
-            {students.map(student => {
+            {visibleStudents.map(student => {
                 const dateKey = formatDateKey(selectedDay);
                 const isBooked = bookings[`${student.id}_${dateKey}`];
                 const specialInfo = getSpecialDateInfo(selectedDay);
@@ -1046,12 +1101,18 @@ const App = () => {
                 return (
                     <div key={student.id} className="flex items-center justify-between p-4 border-b border-gray-100 hover:bg-gray-50 active:bg-gray-100 transition-colors relative">
                         <div className="flex items-center gap-3">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold text-white ${isBooked ? 'bg-green-500' : 'bg-gray-300'}`}>
-                                {student.name[0]}
-                            </div>
+                            {student.school === '備用' ? (
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold border-2 bg-gray-50 text-gray-400 border-gray-200`}>
+                                    <Ghost className="w-5 h-5"/>
+                                </div>
+                            ) : (
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold text-white ${isBooked ? 'bg-green-500' : 'bg-gray-300'}`}>
+                                    {student.name[0]}
+                                </div>
+                            )}
                             <div>
                                 <div className="flex items-center gap-2">
-                                    <div className="font-bold text-gray-800 text-lg">{student.name}</div>
+                                    <div className={`font-bold text-lg ${student.school === '備用' ? 'text-gray-500' : 'text-gray-800'}`}>{student.name}</div>
                                     {/* Mobile Change Indicator */}
                                     {hasCellChange && (
                                         <button 
@@ -1124,7 +1185,7 @@ const App = () => {
       </div>
 
       {/* Modals */}
-      {/* ... Settings, AddStudent, DateEdit Modals ... */}
+      {/* Settings Modal (Enhanced with Subject Config & Lock) */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
             <div className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -1134,6 +1195,28 @@ const App = () => {
                 <div className="mb-6">
                     <label className="block text-sm font-bold text-gray-700 mb-2">單餐費用</label>
                     <input type="number" value={mealPrice} onChange={(e) => setMealPrice(Number(e.target.value))} className="w-full border p-2 rounded"/>
+                </div>
+
+                {/* 備用帳號開關 */}
+                <div className="mb-6 bg-gray-50 p-3 rounded-lg border border-gray-200">
+                    <div className="flex justify-between items-center mb-2">
+                        <label className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                            <Ghost className="w-4 h-4"/> 備用帳號管理
+                        </label>
+                        <button 
+                            onClick={() => setShowSpareAccounts(!showSpareAccounts)}
+                            className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${showSpareAccounts ? 'bg-indigo-100 text-indigo-600 font-bold' : 'bg-gray-200 text-gray-500'}`}
+                        >
+                            {showSpareAccounts ? <><Eye className="w-3 h-3"/> 顯示中</> : <><EyeOff className="w-3 h-3"/> 已隱藏</>}
+                        </button>
+                    </div>
+                    <p className="text-xs text-gray-500 mb-3">隱藏學校為「備用」的學生，保持版面整潔。</p>
+                    <button 
+                        onClick={handleCreateSpareAccounts}
+                        className="w-full py-2 bg-white border border-gray-300 rounded-md text-sm text-gray-600 font-medium hover:bg-gray-50 flex items-center justify-center gap-2"
+                    >
+                        <Plus className="w-3 h-3"/> 一鍵建立 3 個備用帳號
+                    </button>
                 </div>
 
                 {/* 2. 科目與排程管理 (Locked by Default) */}
